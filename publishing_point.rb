@@ -134,15 +134,30 @@ class PublishingPoint
 
   private
 
+  WRITE_TIMEOUT_SECONDS = 2
   def broadcast_packet(packet)
+    to_delete = []
     @subscribers.each do |s|
       begin
-        # TODO: ノンブロッキングでやる。
-        s.write(packet)
-      rescue => e
+        Timeout.timeout(WRITE_TIMEOUT_SECONDS) do
+          r = s.write(packet)
+          if r < packet.bytesize
+            puts "partial write #{r} < #{packet.bytesize}"
+          end
+        end
+      rescue Timeout::Error => e
+        puts "write timeout (#{WRITE_TIMEOUT_SECONDS} sec)"
+        to_delete << s
+      rescue Errno::EPIPE => e
         puts "subscriber disconnected #{s}: #{e}"
-        @subscribers.delete(s)
+        to_delete << s
       end
+    end
+
+    to_delete.each do |s|
+      puts "deleting subscriber #{s}"
+      s.close
+      @subscribers.delete(s)
     end
   end
 end

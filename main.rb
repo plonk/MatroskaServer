@@ -45,6 +45,7 @@ class HttpMatroskaServer
           req = nil
           Timeout.timeout(30) do
             req = http_request(sock)
+            p req
           end
           sock = nil
           handle_request(req)
