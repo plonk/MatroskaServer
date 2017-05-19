@@ -82,13 +82,26 @@ module Matroska
       return 8
     end
 
+    # IO → Integer
+    # throws EOFError
+    def self.read_byte(is)
+      str = is.read(1)
+      if str.nil?
+        fail EOFError, 'closed on read'
+      end
+      return str[0].ord
+    end
+
+    # IO → [Integer]
+    # throws EOFError
     def self.read(is)
-      b = is.getc.ord
-      zeros = self.num_leading_zeros(b)
+      c = read_byte(is)
+      b = c.ord
+      zeros = num_leading_zeros(b)
       fail 'bad data' if zeros > 7
       bytes = [b]
       (zeros).times do
-        bytes << is.getc.ord
+        bytes << read_byte(is)
       end
       VInt.new(bytes)
     end

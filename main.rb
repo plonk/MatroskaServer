@@ -12,6 +12,7 @@ class HttpMatroskaServer
   include Util
 
   class BadRequest < StandardError; end
+  class AlreadyPublishing < StandardError; end
 
   SERVER_NAME = 'MatroskaServer/0.0.1'
 
@@ -33,6 +34,7 @@ class HttpMatroskaServer
     threads = []
     loop do
       client = @socket.accept
+      p client
       @log.info "connection accepted #{addr_format(client.peeraddr)}"
 
       threads = threads.select(&:alive?)
@@ -40,15 +42,19 @@ class HttpMatroskaServer
         begin
           peeraddr = sock.peeraddr # コネクションリセットされると取れなくなるので
           @log.info "thread #{Thread.current} started"
-          req = http_request(sock)
+          req = nil
+          Timeout.timeout(30) do
+            req = http_request(sock)
+          end
           sock = nil
           handle_request(req)
           @log.info "done serving #{addr_format(peeraddr)}"
         rescue => e
           @log.error "#{e.message}"
-          fail
+          # fail if $DEBUG
         ensure
-          req.socket.close if req && req.socket
+          p :close_sockeet
+          req.socket.close if req&.socket
           sock.close if sock
           @log.info "thread #{Thread.current} exiting"
         end
@@ -122,7 +128,7 @@ class HttpMatroskaServer
     newpp = nil
     @lock.synchronize do
       if @publishing_points[path]
-        fail
+        fail AlreadyPublishing, "Publishing point already active."
       end
       @publishing_points[path] = newpp = PublishingPoint.new
 
@@ -132,8 +138,11 @@ class HttpMatroskaServer
 
     yield newpp
   ensure
-    newpp.close
-    remove_publishing_point(path)
+    if newpp
+      p :close_newpp
+      newpp.close
+      remove_publishing_point(path)
+    end
   end
 
   def remove_publishing_point(path)
@@ -148,16 +157,26 @@ class HttpMatroskaServer
     @log.debug 'handle_post' if $DEBUG
     s = request.socket
 
-    open_publishing_point(request.path) do |publishing_point|
-      begin
-        @log.info "publisher starts streaming to #{publishing_point}"
-        publishing_point.start(s)
-      rescue Timeout::Error => e
-        @log.error 'Encoder failed to send data in one minute'
-      rescue => e # ソケットエラー?
-        @log.error e.to_s
-        fail
+    begin
+      open_publishing_point(request.path) do |publishing_point|
+        begin
+          @log.info "publisher starts streaming to #{publishing_point}"
+          publishing_point.start(s)
+        rescue => e
+          @log.error e.to_s
+          fail
+        end
       end
+    rescue EOFError => e
+      # エンコーダーとの接続が切れた
+      @log.info "EOFError: #{e.message}"
+    rescue AlreadyPublishing => e
+      @log.info "503 Service Unavailable"
+      s.write("HTTP/1.0 503 Service Unavailable\r\n")
+      s.write("Content-Length: #{e.message.bytesize}\r\n")
+      s.write("Content-Type: text/plain\r\n")
+      s.write("\r\n")
+      s.write(e.message)
     end
   end
 

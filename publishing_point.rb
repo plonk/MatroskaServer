@@ -75,47 +75,58 @@ class PublishingPoint
   end
 
   def start(sock)
-    header = ""
-    while true
-      id, size = read_id_size(sock)
-      p [id.name, size.unsigned]
-      header += id.bytes.pack("c*")
-      header += size.bytes.pack("c*")
-      if id.name != "Segment"
-        header += sock.read(size.unsigned)
-      else
-        break
-      end
-    end
+    fail "sock is nil" if sock.nil?
 
-    while true
-      id, size = read_id_size(sock)
-      p [id.name, size.unsigned]
-      if id.name != "Cluster"
+    id           = nil
+    size         = nil
+    skip_id_size = nil
+
+    # ヘッダーを読み込む.
+    Timeout.timeout(20) do
+      header = ""
+      while true
+        id, size = read_id_size(sock)
+        p [id.name, size.unsigned]
         header += id.bytes.pack("c*")
         header += size.bytes.pack("c*")
-        header += sock.read(size.unsigned)
-      else
-        @header = header
-        skip_id_size = true
-        break
+        if id.name != "Segment"
+          header += sock.read(size.unsigned)
+        else
+          break
+        end
+      end
+
+      while true
+        id, size = read_id_size(sock)
+        p [id.name, size.unsigned]
+        if id.name != "Cluster"
+          header += id.bytes.pack("c*")
+          header += size.bytes.pack("c*")
+          header += sock.read(size.unsigned)
+        else
+          @header = header
+          skip_id_size = true
+          break
+        end
       end
     end
 
     while true
-      if skip_id_size
-        skip_id_size = false
-      else
-        id, size = read_id_size(sock)
+      Timeout.timeout(20) do
+        if skip_id_size
+          skip_id_size = false
+        else
+          id, size = read_id_size(sock)
+        end
+        if id.name != "Cluster"
+          STDERR.puts "Cluster expected but got #{id.name}"
+        end
+        payload = sock.read(size.unsigned)
+        data = id.bytes.pack("c*") +
+               size.bytes.pack("c*") +
+               payload
+        self << data
       end
-      if id.name != "Cluster"
-        STDERR.puts "Cluster expected but got #{id.name}"
-      end
-      payload = sock.read(size.unsigned)
-      data = id.bytes.pack("c*") +
-             size.bytes.pack("c*") +
-             payload
-      self << data
     end
   ensure
     p :exit_start
