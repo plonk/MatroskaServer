@@ -1,6 +1,7 @@
 require_relative 'matroska'
 require_relative 'monitor_helper'
 require_relative 'util'
+require_relative 'dechunker'
 
 # パブリッシングポイント
 class PublishingPoint
@@ -75,7 +76,7 @@ class PublishingPoint
   end
 
   def start(sock)
-    fail "sock is nil" if sock.nil?
+    fail ArgumentError, "stream is nil" if sock.nil?
 
     id           = nil
     size         = nil

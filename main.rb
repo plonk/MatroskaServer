@@ -71,6 +71,10 @@ class HttpMatroskaServer
     end
   end
 
+  def normalize_header_name(name)
+    name.split('-').map(&:capitalize).join('-')
+  end
+
   def http_request(s)
     if (line = s.gets) =~ /\A([A-Z]+) (\S+) (\S+)\r\n\z/
       meth = $1
@@ -84,10 +88,12 @@ class HttpMatroskaServer
     headers = {}
     while (line = s.gets) != "\r\n"
       if line =~ /\A([^:]+):\s*(.+)\r\n\z/
-        if headers[$1]
-          headers[$1] += ", #{$2}"
+        name = normalize_header_name($1)
+        value = $2
+        if headers[name]
+          headers[name] += ", #{value}"
         else
-          headers[$1] = $2
+          headers[name] = value
         end
       else
         fail BadRequest, "invalid header line: #{line.inspect}"
@@ -162,7 +168,13 @@ class HttpMatroskaServer
       open_publishing_point(request.path) do |publishing_point|
         begin
           @log.info "publisher starts streaming to #{publishing_point}"
-          publishing_point.start(s)
+          if request.headers["Transfer-Encoding"] == "chunked"
+            @log.debug("chunked stream")
+            reader = Dechunker.new(s)
+          else
+            reader = NullReader.new(s)
+          end
+          publishing_point.start(reader)
         rescue => e
           @log.error e.to_s
           fail
