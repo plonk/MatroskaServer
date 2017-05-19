@@ -78,7 +78,7 @@ class HttpMatroskaServer
   def http_request(s)
     if (line = s.gets) =~ /\A([A-Z]+) (\S+) (\S+)\r\n\z/
       meth = $1
-      path = $2
+      path, query = $2.split('?', 2)
       version = $3
     else
       fail BadRequest, "invalid request line: #{line.inspect}"
@@ -99,7 +99,7 @@ class HttpMatroskaServer
         fail BadRequest, "invalid header line: #{line.inspect}"
       end
     end
-    return OpenStruct.new(meth: meth, path: path, version: version,
+    return OpenStruct.new(meth: meth, path: path, query: query, version: version,
                           headers: headers, socket: s)
   rescue BadRequest => e
     @log.error e.message
