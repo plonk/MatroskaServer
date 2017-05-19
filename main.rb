@@ -18,7 +18,7 @@ class HttpMatroskaServer
 
   def initialize(options = {})
     @host              = options[:host] || '0.0.0.0'
-    @port              = options[:port] || 5000
+    @port              = options[:port] || 7000
     @log               = options[:log] || Logger.new(STDOUT)
     @listeners         = []
     @publishing_points = {}
