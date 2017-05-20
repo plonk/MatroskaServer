@@ -127,7 +127,8 @@ class HttpMatroskaServer
     s.close
   end
 
-  # 既にパブリッシングポイントが存在すれば nil を返す
+  # 与えられたパスでパブリッシングポイントを作成し、与えられたブロック
+  # に渡す。ブロックが終了するとパブリッシングポイントは削除される。
   def open_publishing_point(path)
     # 先に取った人が優先なので、失敗するのがいいと思うが、前の接続が死
     # んでいるときはどうしよう？
@@ -152,6 +153,7 @@ class HttpMatroskaServer
     end
   end
 
+  # パブリッシングポイントを削除する。
   def remove_publishing_point(path)
     @log.info "removing point #{path}"
     @lock.synchronize do
@@ -221,11 +223,14 @@ class HttpMatroskaServer
     case request.meth
     when 'GET'
       if request.path == "/stats"
+        # 統計情報の要求。
         handle_stats(request)
       else
+        # 視聴要求。
         handle_get(request)
       end
     when 'POST'
+      # 出版要求。
       handle_post(request)
     else
       request.socket.write "HTTP/1.0 400 Bad Request\r\n\r\n"
