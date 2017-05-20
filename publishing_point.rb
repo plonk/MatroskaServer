@@ -19,10 +19,10 @@ class PublishingPoint
     if @subscribers.empty?
       subs = "none"
     else
-      subs = @subscribers.map { |conn|
+      subs = @subscribers.map { |socket|
         # peeraddr could fail
         begin
-          Util.addr_format(conn.socket.peeraddr)
+          Util.addr_format(socket.peeraddr)
         rescue
           "unknown"
         end

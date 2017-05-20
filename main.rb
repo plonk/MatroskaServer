@@ -3,6 +3,7 @@ require 'monitor'
 require 'ostruct'
 require 'shellwords'
 require 'socket'
+require 'stringio'
 require 'timeout'
 
 require_relative 'publishing_point'
@@ -118,7 +119,16 @@ class HttpMatroskaServer
   end
 
   def stats_body(request)
-    "stats"
+    buf = ""
+    s = StringIO.new(buf)
+    @lock.synchronize do
+      s.write "#{@publishing_points.size} publishing points:\n"
+      @publishing_points.each do |path, pp|
+        s.write "%-10s %p\n" % [path, pp]
+      end
+      s.write "\n"
+    end
+    return buf
   end
 
   # 統計情報取得のリクエスト。
