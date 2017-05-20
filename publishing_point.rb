@@ -21,7 +21,11 @@ class PublishingPoint
     else
       subs = @subscribers.map { |conn|
         # peeraddr could fail
-        Util.addr_format(conn.socket.peeraddr) rescue "unknown"
+        begin
+          Util.addr_format(conn.socket.peeraddr)
+        rescue
+          "unknown"
+        end
       }.join(', ')
     end
 

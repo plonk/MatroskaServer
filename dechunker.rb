@@ -1,3 +1,4 @@
+# chunked transfer encoding のデコード
 class Dechunker
   def initialize(sock)
     @sock = sock

@@ -1,5 +1,6 @@
+# Matroska フォーマット
 module Matroska
-
+  # 可変長整数
   class VInt
     attr :bytes
 
@@ -17,7 +18,6 @@ module Matroska
       end
       value
     end
-
 
     def name
       case bytes
@@ -100,7 +100,7 @@ module Matroska
       zeros = num_leading_zeros(b)
       fail 'bad data' if zeros > 7
       bytes = [b]
-      (zeros).times do
+      zeros.times do
         bytes << read_byte(is)
       end
       VInt.new(bytes)
@@ -127,5 +127,4 @@ module Matroska
     end
   end
   module_function :master_element?
-
 end

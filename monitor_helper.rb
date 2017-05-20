@@ -6,6 +6,20 @@ module MonitorHelper
 
   # クラスメソッド
   module ClassMethods
+    # 指定されたメソッドを、実行する前に @lock をロックし、抜けた
+    # 時にアンロックするように変更する。
+    #
+    # 例:
+    #   class Foo
+    #     include MonitorHelper
+    #     def initialize
+    #       @lock = Monitor.new
+    #     end
+    #     def bar
+    #       # スレッド間で共有されるデータを参照する
+    #     end
+    #     make_safe :bar
+    #   end
     def make_safe(method)
       imp = "_#{method}"
       instance_eval {
