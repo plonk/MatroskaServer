@@ -61,14 +61,18 @@ class PublishingPoint
   make_safe(:<<)
 
   def close
+    return if @closed
+
     # close all subscriber connections
     @subscribers.each do |subscriber|
       begin
+        puts "close: subscriber #{subscriber}"
         subscriber.close
       rescue => e
         puts "an error occured while closing #{subscriber}: #{e.message}"
       end
     end
+    @subscribers = []
     @closed = true
   end
   make_safe :close

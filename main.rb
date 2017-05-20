@@ -32,50 +32,60 @@ class HttpMatroskaServer
     @log.info format('server is on %s', addr_format(@socket.addr))
 
     threads = []
-    loop do
-      client = @socket.accept
-      p client
-      @log.info "connection accepted #{addr_format(client.peeraddr)}"
+    begin
+      loop do
+        client = @socket.accept
+        p client
+        @log.info "connection accepted #{addr_format(client.peeraddr)}" # FIXME: 例外上がる可能性アリ
 
-      threads = threads.select(&:alive?)
-      threads << Thread.start(client) do |sock|
-        begin
-          peeraddr = sock.peeraddr # コネクションリセットされると取れなくなるので
-          @log.info "thread #{Thread.current} started"
-          req = nil
-          Timeout.timeout(30) do
-            req = http_request(sock)
-            p req
+        # 終了したワーカースレッドを threads から削除する
+        threads = threads.select(&:alive?)
+
+        threads << Thread.start(client) do |sock|
+          begin
+            peeraddr = sock.peeraddr # コネクションリセットされると取れなくなるので
+            @log.info "thread #{Thread.current} started"
+            req = Timeout.timeout(30) do
+              read_http_request(sock)
+            end
+            sock = nil
+            handle_request(req)
+            @log.info "done serving #{addr_format(peeraddr)}"
+          rescue => e
+            @log.error "#{e.class}"
+            @log.error "#{e.message}"
+            if $DEBUG
+              e.backtrace.each do |line|
+                @log.error "#{line}"
+              end
+            end
+          ensure
+            @log.debug("closing socket")
+            req.socket.close if req && req.socket
+            sock.close if sock
+            @log.info "thread #{Thread.current} exiting"
           end
-          sock = nil
-          handle_request(req)
-          @log.info "done serving #{addr_format(peeraddr)}"
-        rescue => e
-          @log.error "#{e.message}"
-          # fail if $DEBUG
-        ensure
-          p :close_sockeet
-          req.socket.close if req&.socket
-          sock.close if sock
-          @log.info "thread #{Thread.current} exiting"
         end
       end
-    end
-  rescue Interrupt
-    @log.info 'interrupt from terminal'
-    threads.each { |t| t.kill }
-    threads = []
-    @log.info 'closing publishing points...'
-    @publishing_points.each_pair do |_path, point|
-      point.close unless point.closed?
+    rescue Interrupt
+      @log.info 'interrupt from terminal'
+      threads.each { |t| t.kill }
+      threads = []
+      @log.info 'closing publishing points...'
+      @publishing_points.each_pair do |_path, point|
+        point.close
+      end
     end
   end
 
+  # String → String
+  # "content-type" → "Content-Type" etc.
   def normalize_header_name(name)
     name.split('-').map(&:capitalize).join('-')
   end
 
-  def http_request(s)
+  # IO → OpenStruct(meth:String, path:String, query:String, version:String, headers:Hash, socket:IO)
+  def read_http_request(s)
     if (line = s.gets) =~ /\A([A-Z]+) (\S+) (\S+)\r\n\z/
       meth = $1
       path, query = $2.split('?', 2)
@@ -157,64 +167,62 @@ class HttpMatroskaServer
   def remove_publishing_point(path)
     @log.info "removing point #{path}"
     @lock.synchronize do
+      unless @publishing_points[path]
+        @log.error("publishing point #{path} does not exist!")
+      end
       @publishing_points.delete(path)
       @log.debug "publishing points: #{@publishing_points.inspect}"
     end
   end
 
-  def handle_post(request)
+  # エンコーダーによる POST リクエストを処理する。
+  def handle_post(req)
     @log.debug 'handle_post' if $DEBUG
-    s = request.socket
 
-    begin
-      open_publishing_point(request.path) do |publishing_point|
-        begin
-          @log.info "publisher starts streaming to #{publishing_point}"
-          if request.headers["Transfer-Encoding"] == "chunked"
-            @log.debug("chunked stream")
-            reader = Dechunker.new(s)
-          else
-            reader = NullReader.new(s)
-          end
-          publishing_point.start(reader)
-        rescue => e
-          @log.error e.to_s
-          fail
-        end
+    open_publishing_point(req.path) do |publishing_point|
+      @log.info "publisher starts streaming to #{publishing_point}"
+      if req.headers["Transfer-Encoding"] == "chunked"
+        @log.debug("chunked stream")
+        reader = Dechunker.new(req.socket)
+      else
+        reader = NullReader.new(req.socket)
       end
-    rescue EOFError => e
-      # エンコーダーとの接続が切れた
-      @log.info "EOFError: #{e.message}"
-    rescue AlreadyPublishing => e
-      @log.info "503 Service Unavailable"
-      s.write("HTTP/1.0 503 Service Unavailable\r\n")
-      s.write("Content-Length: #{e.message.bytesize}\r\n")
-      s.write("Content-Type: text/plain\r\n")
-      s.write("\r\n")
-      s.write(e.message)
+      publishing_point.start(reader)
     end
+  rescue EOFError => e
+    # エンコーダーとの接続が切れた
+    @log.info "EOFError: #{e.message}"
+  rescue AlreadyPublishing => e
+    @log.info "503 Service Unavailable"
+    req.socket.write("HTTP/1.0 503 Service Unavailable\r\n")
+    req.socket.write("Content-Length: #{e.message.bytesize}\r\n")
+    req.socket.write("Content-Type: text/plain\r\n")
+    req.socket.write("\r\n")
+    req.socket.write(e.message)
   end
 
-  def handle_get(request)
-    publishing_point = nil
-    @lock.synchronize do
-      publishing_point = @publishing_points[request.path]
+  # プレーヤーによる視聴要求を処理する。
+  def handle_get(req)
+    publishing_point = @lock.synchronize do
+      @publishing_points[req.path]
     end
 
     if publishing_point
-      if publishing_point.header
-        request.socket.write "HTTP/1.0 200 OK\r\n"
-        request.socket.write "Content-Type: video/x-matroska\r\n"
-        #request.socket.write "Server: #{SERVER_NAME}\r\n"
-        request.socket.write "\r\n"
-        publishing_point.add_subscriber(request.socket)
+      if publishing_point.ready?
+        req.socket.write "HTTP/1.0 200 OK\r\n"
+        req.socket.write "Content-Type: video/x-matroska\r\n"
+        req.socket.write "Server: #{SERVER_NAME}\r\n"
+        req.socket.write "\r\n"
+        publishing_point.add_subscriber(req.socket)
         # 以降、ソケットの扱いは読み込み側のスレッドにまかせる。
-        request.socket = nil
+        req.socket = nil
       else
-        request.socket.write "HTTP/1.0 503 Service Unavailable\r\n\r\n"
+        # まだエンコーダーがヘッダーを送りきっていない。
+        @log.debug("publishing point not ready")
+        req.socket.write "HTTP/1.0 503 Service Unavailable\r\n\r\n"
       end
     else
-      request.socket.write "HTTP/1.0 404 Not Found\r\n\r\n"
+      req.socket.write "HTTP/1.0 404 Not Found\r\n\r\n"
     end
   end
 
@@ -233,10 +241,11 @@ class HttpMatroskaServer
       # 出版要求。
       handle_post(request)
     else
+      @log.error("unrecognised request: #{request.meth} #{request.path} ...")
       request.socket.write "HTTP/1.0 400 Bad Request\r\n\r\n"
     end
   end
 end
 
-Thread.abort_on_exception = true
+Thread.abort_on_exception = true if $DEBUG
 HttpMatroskaServer.new.run
