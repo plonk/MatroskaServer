@@ -153,7 +153,7 @@ class PublishingPoint
       rescue Timeout::Error => e
         puts "write timeout (#{WRITE_TIMEOUT_SECONDS} sec)"
         to_delete << s
-      rescue Errno::EPIPE => e
+      rescue Errno::ECONNRESET, Errno::EPIPE => e
         puts "subscriber disconnected #{s}: #{e}"
         to_delete << s
       end
